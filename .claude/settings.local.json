@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker-compose build *)",
+      "Bash(uv add *)",
+      "Bash(uv run *)",
+      "Bash(uv pip *)",
+      "Bash(timeout 30 curl *)",
+      "Bash(timeout 20 curl *)",
+      "Bash(curl *)",
+      "WebFetch(domain:blog.csdn.net)",
+      "Bash(python tests/test_paper_interpretation.py)",
+      "Bash(python tests/test_interpretation_simple.py)",
+      "Bash(python tests/test_pdf_downloader.py --id 2310.06825)",
+      "Bash(python tests/test_interpretation_accuracy.py)",
+      "Bash(python -c ' *)",
+      "Bash(python tests/test_interpretation_accuracy.py --id 2604.16280)",
+      "Bash(set PYTHONUTF8=1)",
+      "Bash(del *)",
+      "WebSearch",
+      "WebFetch(domain:zhuanlan.zhihu.com)",
+      "mcp__plugin_github_github__get_me",
+      "mcp__plugin_github_github__create_repository",
+      "Bash(gh auth *)",
+      "Bash(git add *)"
+    ]
+  }
+}
