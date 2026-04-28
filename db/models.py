@@ -45,13 +45,31 @@ class PaperInterpretation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     paper_id = Column(String, index=True, comment="关联论文ID")
+    # 核心信息
+    problem_domain = Column(String, comment="问题领域：论文解决的具体领域问题")
     core_contributions = Column(JSON, comment="核心贡献")
-    experimental_methods = Column(JSON, comment="实验方法")
-    datasets = Column(JSON, comment="使用的数据集")
-    conclusions = Column(JSON, comment="结论")
     innovations = Column(JSON, comment="创新点")
     limitations = Column(JSON, comment="局限性")
+    conclusions = Column(JSON, comment="结论")
+
+    # 方法实现
+    technical_approach = Column(JSON, comment="技术方法：整体技术架构和思路")
+    method_details = Column(JSON, comment="方法细节：具体的算法、模型、公式描述")
+    implementation_notes = Column(JSON, comment="实现要点：代码实现的关键步骤和注意事项")
+    code_links = Column(JSON, comment="代码链接：论文中提到的所有代码仓库、项目主页链接")
+
+    # 数据集
+    datasets = Column(JSON, comment="使用的数据集列表，包含数据集名称、来源、规模、特点")
+
+    # 实验结果
+    experimental_setup = Column(JSON, comment="实验设置：硬件环境、软件版本、训练参数等")
+    evaluation_metrics = Column(JSON, comment="评价指标：使用的所有评价指标定义和计算方法")
+    experimental_results = Column(JSON, comment="实验结果：各指标的具体数值、对比结果、显著性分析")
+    baseline_comparison = Column(JSON, comment="基线对比：与现有方法的对比结果和优势分析")
+
+    # 辅助信息
     references = Column(JSON, comment="关键参考文献")
+    figure_descriptions = Column(JSON, comment="图表描述信息")
     interpretation_model = Column(String, comment="使用的大模型")
     interpretation_time = Column(DateTime, default=datetime.utcnow)
     confidence_score = Column(Float, comment="解读置信度")

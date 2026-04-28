@@ -22,7 +22,14 @@
       "mcp__plugin_github_github__get_me",
       "mcp__plugin_github_github__create_repository",
       "Bash(gh auth *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(python *)",
+      "Bash(set PYTHONIOENCODING=utf-8)",
+      "Bash(grep *)",
+      "Bash(dir *)",
+      "Bash(cd \"D:\\\\\\\\workspace\\\\\\\\arxiv\\\\\\\\edict-gongbu-v1.0.0\")"
     ]
   }
 }

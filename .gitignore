@@ -55,6 +55,7 @@ chroma_db/
 storage/
 tmp/
 temp/
+outputs/
 
 # Environment variables
 .env
