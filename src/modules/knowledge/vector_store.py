@@ -9,9 +9,9 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 from chromadb.utils import embedding_functions
 
-from config.settings import settings
-from db.models import Paper, PaperInterpretation
-from db.database import get_db
+from src.config.settings import settings
+from src.db.models import Paper, PaperInterpretation
+from src.db.database import get_db
 
 
 class VectorStore:

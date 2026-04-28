@@ -17,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 from loguru import logger
 
-from modules.crawler.arxiv_client import ArxivClient
-from modules.interpretation.paper_interpreter import PaperInterpreter
-from db.database import get_db
-from db.models import Paper, PaperInterpretation
+from src.modules.crawler.arxiv_client import ArxivClient
+from src.modules.interpretation.paper_interpreter import PaperInterpreter
+from src.db.database import get_db
+from src.db.models import Paper, PaperInterpretation
 
 
 @pytest.fixture(scope="module")

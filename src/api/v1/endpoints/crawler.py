@@ -7,7 +7,7 @@ from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 
-from modules.crawler.arxiv_client import ArxivClient, AsyncArxivClient
+from src.modules.crawler.arxiv_client import ArxivClient, AsyncArxivClient
 
 router = APIRouter()
 
@@ -72,8 +72,8 @@ async def download_paper(paper_id: str):
     下载指定论文的PDF
     """
     try:
-        from db.database import get_db
-        from db.models import Paper
+        from src.db.database import get_db
+        from src.db.models import Paper
 
         db = next(get_db())
         paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()

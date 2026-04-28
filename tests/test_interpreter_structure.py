@@ -11,7 +11,7 @@ import sys
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.interpretation.paper_interpreter import PaperInterpreter
+from src.modules.interpretation.paper_interpreter import PaperInterpreter
 
 import sys
 # 设置输出编码为UTF-8
@@ -119,7 +119,7 @@ def test_data_structure():
     # 测试是否符合Pydantic模型
     try:
         # 直接测试PaperInterpretationResult模型，而不是parser
-        from modules.interpretation.paper_interpreter import PaperInterpretationResult
+        from src.modules.interpretation.paper_interpreter import PaperInterpretationResult
         parsed_result = PaperInterpretationResult(**mock_result)
         print("模拟结果符合数据结构要求")
 
@@ -151,7 +151,7 @@ def test_prompt_templates():
     print("测试提示词模板")
     print("=" * 80)
 
-    from modules.interpretation.paper_interpreter import SYSTEM_PROMPT, HUMAN_PROMPT_TEMPLATE
+    from src.modules.interpretation.paper_interpreter import SYSTEM_PROMPT, HUMAN_PROMPT_TEMPLATE
 
     print("🔹 系统提示词长度:", len(SYSTEM_PROMPT))
     print("🔹 用户提示词模板长度:", len(HUMAN_PROMPT_TEMPLATE))

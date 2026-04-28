@@ -29,7 +29,13 @@
       "Bash(set PYTHONIOENCODING=utf-8)",
       "Bash(grep *)",
       "Bash(dir *)",
-      "Bash(cd \"D:\\\\\\\\workspace\\\\\\\\arxiv\\\\\\\\edict-gongbu-v1.0.0\")"
+      "Bash(cd \"D:\\\\\\\\workspace\\\\\\\\arxiv\\\\\\\\edict-gongbu-v1.0.0\")",
+      "Bash(ping github.com)",
+      "Bash(sed -i 's/from modules/from src.modules/g' tests/*.py)",
+      "Bash(sed -i 's/from config/from src.config/g' tests/*.py)",
+      "Bash(sed -i 's/from db/from src.db/g' tests/*.py)",
+      "Bash(sed -i 's/from api/from src.api/g' tests/*.py)",
+      "Bash(sed -i 's/from core/from src.core/g' tests/*.py)"
     ]
   }
 }

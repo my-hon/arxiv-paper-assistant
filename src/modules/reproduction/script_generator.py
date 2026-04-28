@@ -14,9 +14,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from loguru import logger
 
-from config.settings import settings
-from db.database import get_db
-from db.models import Paper, PaperInterpretation, ReproductionTask
+from src.config.settings import settings
+from src.db.database import get_db
+from src.db.models import Paper, PaperInterpretation, ReproductionTask
 
 
 class ScriptGenerator:

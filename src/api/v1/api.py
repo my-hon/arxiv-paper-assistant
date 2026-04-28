@@ -3,11 +3,11 @@ API路由总入口
 """
 from fastapi import APIRouter
 
-from api.v1.endpoints import crawler
-from api.v1.endpoints import interpretation
-from api.v1.endpoints import reproduction
-from api.v1.endpoints import knowledge
-from api.v1.endpoints import papers
+from src.api.v1.endpoints import crawler
+from src.api.v1.endpoints import interpretation
+from src.api.v1.endpoints import reproduction
+from src.api.v1.endpoints import knowledge
+from src.api.v1.endpoints import papers
 
 api_router = APIRouter()
 

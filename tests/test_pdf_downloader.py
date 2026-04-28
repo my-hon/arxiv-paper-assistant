@@ -30,8 +30,8 @@ from tenacity import (
 # 添加项目根目录
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.settings import settings
-from modules.crawler.arxiv_client import ArxivClient
+from src.config.settings import settings
+from src.modules.crawler.arxiv_client import ArxivClient
 
 
 @dataclass

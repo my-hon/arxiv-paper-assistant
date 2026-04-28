@@ -8,15 +8,16 @@ from pathlib import Path
 
 # 确保模块路径正确
 sys.path.append(str(Path(__file__).parent))
+sys.path.append(str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from api.v1.api import api_router
-from config.settings import settings
-from core.init import initialize_system
+from src.api.v1.api import api_router
+from src.config.settings import settings
+from src.core.init import initialize_system
 
 # 日志配置
 logger.add(

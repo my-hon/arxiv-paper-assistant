@@ -72,7 +72,13 @@ MODEL_NAME=gpt-3.5-turbo-1106
 
 ### 3. 启动服务
 ```bash
+cd src
 python main.py
+```
+
+或者在项目根目录执行：
+```bash
+python src/main.py
 ```
 
 服务将在 `http://localhost:8000` 启动。
@@ -170,12 +176,18 @@ curl -X GET "http://localhost:8000/api/v1/knowledge/similar/arxiv_2310.06825"
 │               ├── knowledge.py
 │               └── papers.py
 ├── storage/                         # 文件存储目录
-│   ├── pdfs/                        # PDF文件
+│   ├── paper_system.db              # SQLite数据库文件
+│   ├── chroma_db/                   # 向量数据库存储
+│   ├── papers/                      # 论文解析结果（按论文ID分类）
+│   │   └── {paper_id}/
+│   │       ├── raw/                 # 原始PDF和文本
+│   │       ├── images/              # 提取的图片
+│   │       ├── structured/          # 结构化解析结果
+│   │       └── reports/             # 生成的解读报告
+│   ├── pdfs/                        # 原始PDF文件存储
 │   ├── scripts/                     # 复现脚本
 │   └── reports/                     # 复现报告
-├── chroma_db/                       # 向量数据库存储
 ├── logs/                            # 日志文件
-└── papers.db                        # SQLite数据库文件
 ```
 
 ## 配置说明

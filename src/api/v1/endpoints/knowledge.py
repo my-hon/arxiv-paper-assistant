@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 
-from modules.knowledge.vector_store import VectorStore
+from src.modules.knowledge.vector_store import VectorStore
 
 router = APIRouter()
 
@@ -128,8 +128,8 @@ async def get_knowledge_stats():
         
         stats = vector_store.get_index_stats()
         
-        from db.database import get_db
-        from db.models import Paper, PaperInterpretation, ReproductionTask
+        from src.db.database import get_db
+        from src.db.models import Paper, PaperInterpretation, ReproductionTask
         
         db = next(get_db())
         

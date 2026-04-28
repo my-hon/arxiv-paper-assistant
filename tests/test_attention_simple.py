@@ -6,8 +6,8 @@ import os
 import json
 import asyncio
 from pathlib import Path
-from modules.crawler.arxiv_client import ArxivClient
-from modules.interpretation.paper_interpreter import PaperInterpreter
+from src.modules.crawler.arxiv_client import ArxivClient
+from src.modules.interpretation.paper_interpreter import PaperInterpreter
 
 # 配置
 OUTPUT_DIR = Path("D:/workspace/arxiv/edict-gongbu-v1.0.0/outputs")
@@ -60,7 +60,7 @@ async def main():
     print("\n5. Parsing paper with LLM...")
     from langchain_core.output_parsers import PydanticOutputParser
     from langchain_core.messages import HumanMessage, SystemMessage
-    from modules.interpretation.paper_interpreter import PaperInterpretationResult, SYSTEM_PROMPT, HUMAN_PROMPT_TEMPLATE
+    from src.modules.interpretation.paper_interpreter import PaperInterpretationResult, SYSTEM_PROMPT, HUMAN_PROMPT_TEMPLATE
 
     parser = PydanticOutputParser(pydantic_object=PaperInterpretationResult)
     format_instructions = parser.get_format_instructions()

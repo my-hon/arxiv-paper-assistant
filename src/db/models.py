@@ -6,7 +6,7 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, Float, JSON
 from sqlalchemy.sql import func
 from datetime import datetime
 
-from db.database import Base
+from src.db.database import Base
 
 
 class Paper(Base):

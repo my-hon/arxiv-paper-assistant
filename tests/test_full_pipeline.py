@@ -15,10 +15,10 @@ import pandas as pd
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.crawler.arxiv_client import ArxivClient
-from modules.interpretation.paper_interpreter import PaperInterpreter
-from db.database import get_db
-from db.models import Paper
+from src.modules.crawler.arxiv_client import ArxivClient
+from src.modules.interpretation.paper_interpreter import PaperInterpreter
+from src.db.database import get_db
+from src.db.models import Paper
 
 # 配置
 TEST_PAPER_QUERY = "Attention Is All You Need AND id:1706.03762"
@@ -200,7 +200,7 @@ async def test_full_pipeline():
 
     # 先检查配置是否有API密钥
     import os
-    from config.settings import settings
+    from src.config.settings import settings
     if not settings.OPENAI_API_KEY:
         print("[WARN] 未配置OPENAI_API_KEY，跳过实际解读，使用模拟结果测试数据结构")
         # 使用模拟解读结果

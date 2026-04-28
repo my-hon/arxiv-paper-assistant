@@ -7,13 +7,13 @@ from loguru import logger
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from config.settings import settings
-from db.models import Base
-from db.database import engine
-from modules.crawler.arxiv_client import ArxivClient as ArxivCrawler
-from modules.interpretation.paper_interpreter import PaperInterpreter
-from modules.reproduction.script_generator import ScriptGenerator
-from modules.knowledge.vector_store import VectorStore
+from src.config.settings import settings
+from src.db.models import Base
+from src.db.database import engine
+from src.modules.crawler.arxiv_client import ArxivClient as ArxivCrawler
+from src.modules.interpretation.paper_interpreter import PaperInterpreter
+from src.modules.reproduction.script_generator import ScriptGenerator
+from src.modules.knowledge.vector_store import VectorStore
 
 async def initialize_system():
     """异步初始化系统所有核心组件。

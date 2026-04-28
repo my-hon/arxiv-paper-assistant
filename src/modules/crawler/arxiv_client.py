@@ -11,8 +11,8 @@ from typing import Dict, Generator, List, Optional
 import arxiv
 from loguru import logger
 
-from config.settings import settings
-from db.database import get_db
+from src.config.settings import settings
+from src.db.database import get_db
 
 
 class ArxivClient:
@@ -142,19 +142,17 @@ class ArxivClient:
             return []
             raise
 
-    def search_by_id(self, arxiv_id: str) -> Optional[arxiv.Result]:
+    async def search_by_id(self, arxiv_id: str) -> Optional[Dict]:
         """根据arXiv ID精确搜索单个论文。
 
         Args:
             arxiv_id: arXiv论文ID，如"2310.06825"，可包含版本号或不包含。
 
         Returns:
-            Optional[arxiv.Result]: 找到返回arxiv.Result对象，未找到返回None。
+            Optional[Dict]: 找到返回标准化的论文信息字典，未找到返回None。
         """
         try:
-            results = list(
-                self.search_papers(query="", id_list=[arxiv_id], max_results=1)
-            )
+            results = await self.search_papers(query="", id_list=[arxiv_id], max_results=1)
             return results[0] if results else None
         except Exception as e:
             logger.error(f"根据ID搜索论文失败 {arxiv_id}: {str(e)}")
@@ -281,7 +279,7 @@ class ArxivClient:
         Returns:
             int: 实际保存成功的论文数量。
         """
-        from db.models import Paper
+        from src.db.models import Paper
 
         db = next(get_db())
         saved_count = 0

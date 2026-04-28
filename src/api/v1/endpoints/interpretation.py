@@ -5,9 +5,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 
-from modules.interpretation.paper_interpreter import PaperInterpreter
-from db.database import get_db
-from db.models import PaperInterpretation
+from src.modules.interpretation.paper_interpreter import PaperInterpreter
+from src.db.database import get_db
+from src.db.models import PaperInterpretation
 
 router = APIRouter()
 

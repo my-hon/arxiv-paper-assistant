@@ -6,8 +6,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
-from db.database import get_db
-from db.models import Paper, PaperInterpretation
+from src.db.database import get_db
+from src.db.models import Paper, PaperInterpretation
 
 router = APIRouter()
 
@@ -118,7 +118,7 @@ async def delete_paper(paper_id: str):
         db.commit()
         
         # 从向量索引中删除
-        from modules.knowledge.vector_store import VectorStore
+        from src.modules.knowledge.vector_store import VectorStore
         vector_store = VectorStore()
         await vector_store.initialize()
         await vector_store.delete_paper_from_index(paper_id)

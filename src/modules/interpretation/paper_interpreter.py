@@ -14,9 +14,9 @@ from loguru import logger
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from config.settings import settings
-from db.database import get_db
-from db.models import Paper, PaperInterpretation
+from src.config.settings import settings
+from src.db.database import get_db
+from src.db.models import Paper, PaperInterpretation
 
 # 提示词常量
 SYSTEM_PROMPT = """

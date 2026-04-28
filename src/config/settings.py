@@ -44,9 +44,9 @@ class Settings(BaseSettings):
     """代理服务器URL，用于需要代理访问外网的场景"""
 
     # 数据库配置
-    DATABASE_URL: str = "sqlite:///./paper_system.db"
+    DATABASE_URL: str = "sqlite:///./storage/paper_system.db"
     """关系数据库连接URL，默认使用SQLite"""
-    CHROMA_DB_PATH: str = "./chroma_db"
+    CHROMA_DB_PATH: str = "./storage/chroma_db"
     """Chroma向量数据库本地存储路径，仅在使用本地模式时有效"""
     CHROMA_DB_HOST: Optional[str] = None
     """远程Chroma服务主机地址，配置后使用远程模式"""

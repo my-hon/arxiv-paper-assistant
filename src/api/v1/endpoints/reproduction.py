@@ -5,9 +5,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, List
 
-from modules.reproduction.script_generator import ScriptGenerator
-from db.database import get_db
-from db.models import ReproductionTask
+from src.modules.reproduction.script_generator import ScriptGenerator
+from src.db.database import get_db
+from src.db.models import ReproductionTask
 
 router = APIRouter()
 
