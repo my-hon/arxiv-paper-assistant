@@ -15,6 +15,13 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from src.config.settings import settings
+from src.core.serializers import (
+    bullet_list,
+    format_authors,
+    format_date,
+    model_dicts,
+    serialize_interpretation,
+)
 from src.db.database import get_db
 from src.db.models import Paper, PaperInterpretation
 
@@ -367,37 +374,7 @@ class PaperInterpreter:
 
         if existing_interpretation:
             logger.info(f"论文已解读过: {paper_id}")
-            return {
-                "paper_id": paper_id,
-                # 核心信息
-                "problem_domain": existing_interpretation.problem_domain,
-                "core_contributions": existing_interpretation.core_contributions,
-                "innovations": existing_interpretation.innovations,
-                "limitations": existing_interpretation.limitations,
-                "conclusions": existing_interpretation.conclusions,
-
-                # 方法实现
-                "technical_approach": existing_interpretation.technical_approach,
-                "method_details": existing_interpretation.method_details,
-                "implementation_notes": existing_interpretation.implementation_notes,
-                "code_links": existing_interpretation.code_links,
-
-                # 数据集
-                "datasets": existing_interpretation.datasets,
-
-                # 实验结果
-                "experimental_setup": existing_interpretation.experimental_setup,
-                "evaluation_metrics": existing_interpretation.evaluation_metrics,
-                "experimental_results": existing_interpretation.experimental_results,
-                "baseline_comparison": existing_interpretation.baseline_comparison,
-
-                # 辅助信息
-                "references": existing_interpretation.references,
-                "figure_descriptions": existing_interpretation.figure_descriptions,
-                "confidence_score": existing_interpretation.confidence_score,
-                "interpretation_time": existing_interpretation.interpretation_time,
-                "interpretation_model": existing_interpretation.interpretation_model,
-            }
+            return serialize_interpretation(existing_interpretation)
 
         # 获取文本内容
         if (
@@ -406,21 +383,13 @@ class PaperInterpreter:
             or not os.path.exists(paper.pdf_path)
         ):
             logger.info(f"使用摘要解读论文: {paper_id}")
-            text = ABSTRACT_MODE_TEXT.format(
-                title=paper.title,
-                authors=", ".join(paper.authors),
-                abstract=paper.abstract,
-            )
+            text = self._build_abstract_text(paper)
         else:
             logger.info(f"使用全文解读论文: {paper_id}")
             full_text = self.extract_text_from_pdf(paper.pdf_path)
             if not full_text:
                 logger.warning("全文提取失败，回退到使用摘要")
-                text = ABSTRACT_MODE_TEXT.format(
-                    title=paper.title,
-                    authors=", ".join(paper.authors),
-                    abstract=paper.abstract,
-                )
+                text = self._build_abstract_text(paper)
             else:
                 text = self._truncate_text(full_text)
 
@@ -429,10 +398,8 @@ class PaperInterpreter:
 
         human_prompt = HUMAN_PROMPT_TEMPLATE.format(
             title=paper.title,
-            authors=", ".join(paper.authors),
-            publication_date=paper.publication_date.strftime("%Y-%m-%d")
-            if paper.publication_date
-            else "未知",
+            authors=format_authors(paper.authors),
+            publication_date=format_date(paper.publication_date),
             source=paper.source,
             content=text,
             format_instructions=format_instructions,
@@ -451,37 +418,10 @@ class PaperInterpreter:
             # 解析输出
             result = self.parser.parse(response_content)
 
-            # 保存到数据库
+            # 保存到数据库，字段与PaperInterpretation模型一一对应
+            fields = self._result_to_fields(result)
             interpretation = PaperInterpretation(
-                paper_id=paper_id,
-                # 核心信息
-                problem_domain=result.problem_domain,
-                core_contributions=result.core_contributions,
-                innovations=result.innovations,
-                limitations=result.limitations,
-                conclusions=result.conclusions,
-
-                # 方法实现
-                technical_approach=result.technical_approach,
-                method_details=[md.dict() for md in result.method_details],
-                implementation_notes=result.implementation_notes,
-                code_links=[cl.dict() for cl in result.code_links],
-
-                # 数据集
-                datasets=[ds.dict() for ds in result.datasets],
-
-                # 实验结果
-                experimental_setup=result.experimental_setup,
-                evaluation_metrics=[em.dict() for em in result.evaluation_metrics],
-                experimental_results=[er.dict() for er in result.experimental_results],
-                baseline_comparison=result.baseline_comparison,
-
-                # 辅助信息
-                references=result.key_references,
-                figure_descriptions=result.figure_descriptions,
-                interpretation_model=settings.MODEL_NAME,
-                confidence_score=result.confidence_score,
-                raw_response=response_content,
+                paper_id=paper_id, raw_response=response_content, **fields
             )
 
             db.add(interpretation)
@@ -518,33 +458,7 @@ class PaperInterpreter:
 
             return {
                 "paper_id": paper_id,
-                # 核心信息
-                "problem_domain": result.problem_domain,
-                "core_contributions": result.core_contributions,
-                "innovations": result.innovations,
-                "limitations": result.limitations,
-                "conclusions": result.conclusions,
-
-                # 方法实现
-                "technical_approach": result.technical_approach,
-                "method_details": [md.dict() for md in result.method_details],
-                "implementation_notes": result.implementation_notes,
-                "code_links": [cl.dict() for cl in result.code_links],
-
-                # 数据集
-                "datasets": [ds.dict() for ds in result.datasets],
-
-                # 实验结果
-                "experimental_setup": result.experimental_setup,
-                "evaluation_metrics": [em.dict() for em in result.evaluation_metrics],
-                "experimental_results": [er.dict() for er in result.experimental_results],
-                "baseline_comparison": result.baseline_comparison,
-
-                # 辅助信息
-                "references": result.key_references,
-                "figure_descriptions": result.figure_descriptions,
-                "confidence_score": result.confidence_score,
-                "interpretation_model": settings.MODEL_NAME,
+                **fields,
                 "markdown_path": markdown_path,
                 "extracted_images": len(extracted_images),
             }
@@ -553,6 +467,54 @@ class PaperInterpreter:
             logger.error(f"论文解读失败: {str(e)}")
             db.rollback()
             return None
+
+    @staticmethod
+    def _build_abstract_text(paper: Paper) -> str:
+        """构建仅包含标题、作者和摘要的解读输入文本。"""
+        return ABSTRACT_MODE_TEXT.format(
+            title=paper.title,
+            authors=format_authors(paper.authors),
+            abstract=paper.abstract,
+        )
+
+    @staticmethod
+    def _result_to_fields(result: PaperInterpretationResult) -> Dict:
+        """将大模型解读结果转换为PaperInterpretation模型字段。
+
+        返回的字典同时用于数据库写入和接口响应，避免两处重复维护字段映射。
+        """
+        return {
+            # 核心信息
+            "problem_domain": result.problem_domain,
+            "core_contributions": result.core_contributions,
+            "innovations": result.innovations,
+            "limitations": result.limitations,
+            "conclusions": result.conclusions,
+            # 方法实现
+            "technical_approach": result.technical_approach,
+            "method_details": model_dicts(result.method_details),
+            "implementation_notes": result.implementation_notes,
+            "code_links": model_dicts(result.code_links),
+            # 数据集
+            "datasets": model_dicts(result.datasets),
+            # 实验结果
+            "experimental_setup": result.experimental_setup,
+            "evaluation_metrics": model_dicts(result.evaluation_metrics),
+            "experimental_results": model_dicts(result.experimental_results),
+            "baseline_comparison": result.baseline_comparison,
+            # 辅助信息
+            "references": result.key_references,
+            "figure_descriptions": result.figure_descriptions,
+            "confidence_score": result.confidence_score,
+            "interpretation_model": settings.MODEL_NAME,
+        }
+
+    @staticmethod
+    def _section(icon: str, title: str, items: Optional[List]) -> str:
+        """渲染一个以无序列表为内容的Markdown章节，内容为空时返回空字符串。"""
+        if not items:
+            return ""
+        return SECTION_TEMPLATE.format(icon=icon, title=title) + bullet_list(items)
 
     def generate_markdown_report(
         self, paper: Paper, result: PaperInterpretationResult, images: List[Dict]
@@ -576,10 +538,8 @@ class PaperInterpreter:
         markdown = MARKDOWN_REPORT_TEMPLATE.format(
             title=paper.title,
             paper_id=paper.paper_id,
-            authors=", ".join(paper.authors),
-            publication_date=paper.publication_date.strftime("%Y-%m-%d")
-            if paper.publication_date
-            else "未知",
+            authors=format_authors(paper.authors),
+            publication_date=format_date(paper.publication_date),
             source=paper.source,
             model_name=settings.MODEL_NAME,
             confidence_score=result.confidence_score,
@@ -587,13 +547,10 @@ class PaperInterpreter:
         )
 
         # 核心贡献
-        for contrib in result.core_contributions:
-            markdown += f"- {contrib}\n"
+        markdown += bullet_list(result.core_contributions)
 
         # 创新点
-        markdown += SECTION_TEMPLATE.format(icon="💡", title="创新点")
-        for innovation in result.innovations:
-            markdown += f"- {innovation}\n"
+        markdown += self._section("💡", "创新点", result.innovations)
 
         # 技术方法
         markdown += SECTION_TEMPLATE.format(icon="🔬", title="技术方法")
@@ -607,15 +564,11 @@ class PaperInterpreter:
             if method.formula:
                 markdown += f"**核心公式**:\n```latex\n{method.formula}\n```\n\n"
             markdown += "**实现步骤**:\n"
-            for step in method.implementation_steps:
-                markdown += f"- {step}\n"
+            markdown += bullet_list(method.implementation_steps)
             markdown += "\n"
 
         # 实现要点
-        if result.implementation_notes:
-            markdown += SECTION_TEMPLATE.format(icon="💡", title="实现要点")
-            for note in result.implementation_notes:
-                markdown += f"- {note}\n"
+        markdown += self._section("💡", "实现要点", result.implementation_notes)
 
         # 代码链接
         if result.code_links:
@@ -632,10 +585,7 @@ class PaperInterpreter:
             markdown += f"- **特点**: {dataset.characteristics}\n\n"
 
         # 实验设置
-        if result.experimental_setup:
-            markdown += SECTION_TEMPLATE.format(icon="🧪", title="实验设置")
-            for setup in result.experimental_setup:
-                markdown += f"- {setup}\n"
+        markdown += self._section("🧪", "实验设置", result.experimental_setup)
 
         # 评价指标
         if result.evaluation_metrics:
@@ -656,20 +606,15 @@ class PaperInterpreter:
             markdown += "\n"
 
         # 基线对比
-        if result.baseline_comparison:
-            markdown += SECTION_TEMPLATE.format(icon="📊", title="基线对比")
-            for comparison in result.baseline_comparison:
-                markdown += f"- {comparison}\n"
+        markdown += self._section("📊", "基线对比", result.baseline_comparison)
 
         # 主要结论
         markdown += SECTION_TEMPLATE.format(icon="🎓", title="主要结论")
-        for conclusion in result.conclusions:
-            markdown += f"- {conclusion}\n"
+        markdown += bullet_list(result.conclusions)
 
         # 局限性
         markdown += SECTION_TEMPLATE.format(icon="⚠️", title="局限性")
-        for limitation in result.limitations:
-            markdown += f"- {limitation}\n"
+        markdown += bullet_list(result.limitations)
 
         # 添加图表部分
         if images or result.figure_descriptions:
@@ -711,8 +656,7 @@ class PaperInterpreter:
         # 添加参考文献
         if result.key_references:
             markdown += REFERENCES_SECTION_TEMPLATE
-            for ref in result.key_references:
-                markdown += f"- {ref}\n"
+            markdown += bullet_list(result.key_references)
 
         # 添加页脚
         generated_at = (

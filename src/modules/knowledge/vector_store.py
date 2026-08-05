@@ -14,6 +14,42 @@ from src.db.models import Paper, PaperInterpretation
 from src.db.database import get_db
 
 
+def _paper_from_metadata(
+    paper_id: str,
+    metadata: Dict,
+    distance: float,
+    snippet: Optional[str] = None,
+) -> Dict:
+    """将Chroma查询返回的元数据转换为统一的论文字典。
+
+    Args:
+        paper_id: 论文ID。
+        metadata: Chroma中存储的元数据。
+        distance: 向量距离，用于换算相似度（0-1，越高越相似）。
+        snippet: 文档内容，提供时附加分类、状态等完整字段和预览片段。
+    """
+    paper = {
+        "paper_id": paper_id,
+        "title": metadata.get("title", ""),
+        "authors": json.loads(metadata.get("authors", "[]")),
+        "source": metadata.get("source", ""),
+        "publication_date": metadata.get("publication_date", ""),
+        "similarity": 1 / (1 + distance),
+    }
+
+    if snippet is not None:
+        paper.update(
+            {
+                "categories": json.loads(metadata.get("categories", "[]")),
+                "citation_count": metadata.get("citation_count", 0),
+                "status": metadata.get("status", ""),
+                "snippet": snippet[:300] + "...",
+            }
+        )
+
+    return paper
+
+
 class VectorStore:
     """向量存储管理器"""
 
@@ -62,14 +98,20 @@ class VectorStore:
             logger.error(f"向量存储初始化失败: {str(e)}")
             raise
 
+    def _is_initialized(self) -> bool:
+        """检查集合是否已初始化，未初始化时记录错误日志。"""
+        if not self.paper_collection:
+            logger.error("向量存储未初始化")
+            return False
+        return True
+
     async def add_paper_to_index(self, paper_id: str) -> bool:
         """
         将论文添加到向量索引
         :param paper_id: 论文ID
         :return: 是否成功
         """
-        if not self.paper_collection:
-            logger.error("向量存储未初始化")
+        if not self._is_initialized():
             return False
 
         db = next(get_db())
@@ -147,8 +189,7 @@ class VectorStore:
         :param filter_conditions: 过滤条件，如{"source": "arxiv"}
         :return: 搜索结果列表
         """
-        if not self.paper_collection:
-            logger.error("向量存储未初始化")
+        if not self._is_initialized():
             return []
 
         try:
@@ -159,29 +200,15 @@ class VectorStore:
                 include=["documents", "metadatas", "distances"],
             )
 
-            papers = []
-            for i in range(len(results["ids"][0])):
-                paper_id = results["ids"][0][i]
-                metadata = results["metadatas"][0][i]
-                distance = results["distances"][0][i]
-
-                # 计算相似度分数 (0-1，越高越相似)
-                similarity = 1 / (1 + distance)
-
-                paper = {
-                    "paper_id": paper_id,
-                    "title": metadata.get("title", ""),
-                    "authors": json.loads(metadata.get("authors", "[]")),
-                    "source": metadata.get("source", ""),
-                    "publication_date": metadata.get("publication_date", ""),
-                    "categories": json.loads(metadata.get("categories", "[]")),
-                    "citation_count": metadata.get("citation_count", 0),
-                    "status": metadata.get("status", ""),
-                    "similarity": similarity,
-                    "snippet": results["documents"][0][i][:300] + "...",  # 预览片段
-                }
-
-                papers.append(paper)
+            papers = [
+                _paper_from_metadata(
+                    results["ids"][0][i],
+                    results["metadatas"][0][i],
+                    results["distances"][0][i],
+                    snippet=results["documents"][0][i],
+                )
+                for i in range(len(results["ids"][0]))
+            ]
 
             logger.info(f"搜索完成，找到 {len(papers)} 篇相关论文")
             return papers
@@ -197,8 +224,7 @@ class VectorStore:
         :param limit: 返回结果数量
         :return: 相似论文列表
         """
-        if not self.paper_collection:
-            logger.error("向量存储未初始化")
+        if not self._is_initialized():
             return []
 
         try:
@@ -226,20 +252,13 @@ class VectorStore:
                 if result_id == paper_id:
                     continue
 
-                metadata = results["metadatas"][0][i]
-                distance = results["distances"][0][i]
-                similarity = 1 / (1 + distance)
-
-                paper = {
-                    "paper_id": result_id,
-                    "title": metadata.get("title", ""),
-                    "authors": json.loads(metadata.get("authors", "[]")),
-                    "source": metadata.get("source", ""),
-                    "publication_date": metadata.get("publication_date", ""),
-                    "similarity": similarity,
-                }
-
-                papers.append(paper)
+                papers.append(
+                    _paper_from_metadata(
+                        result_id,
+                        results["metadatas"][0][i],
+                        results["distances"][0][i],
+                    )
+                )
                 if len(papers) >= limit:
                     break
 
@@ -256,8 +275,7 @@ class VectorStore:
         :param paper_id: 论文ID
         :return: 是否成功
         """
-        if not self.paper_collection:
-            logger.error("向量存储未初始化")
+        if not self._is_initialized():
             return False
 
         try:
@@ -274,3 +292,10 @@ class VectorStore:
             return {"count": 0}
 
         return {"count": self.paper_collection.count()}
+
+
+async def get_vector_store() -> VectorStore:
+    """创建并初始化向量存储实例，供各接口复用。"""
+    vector_store = VectorStore()
+    await vector_store.initialize()
+    return vector_store

@@ -6,7 +6,7 @@
 
 import asyncio
 import os
-from typing import Dict, Generator, List, Optional
+from typing import Dict, List, Optional
 
 import arxiv
 from loguru import logger
@@ -35,7 +35,7 @@ class ArxivClient:
         )
         logger.info("arxiv.py客户端初始化完成")
 
-    async def search_papers(
+    async def search_results(
         self,
         query: str,
         max_results: int = 10,
@@ -50,8 +50,8 @@ class ArxivClient:
         id_list: Optional[List[str]] = None,
         sort_by: arxiv.SortCriterion = arxiv.SortCriterion.SubmittedDate,
         sort_order: arxiv.SortOrder = arxiv.SortOrder.Descending,
-    ) -> Generator[arxiv.Result, None, None]:
-        """根据条件搜索arXiv论文。
+    ) -> List[arxiv.Result]:
+        """根据条件搜索arXiv论文，返回原始结果对象。
 
         Args:
             query: 通用搜索关键词，在所有字段中匹配。
@@ -70,11 +70,9 @@ class ArxivClient:
             sort_order: 排序顺序，可选值：Ascending, Descending，默认降序。
 
         Returns:
-            Generator[arxiv.Result, None, None]: 论文结果生成器，每个元素为
-                arxiv.Result对象。
-
-        Raises:
-            Exception: 当API请求失败时抛出异常。
+            List[arxiv.Result]: 论文结果列表，请求失败时返回空列表。
+                需要PDF下载等原始能力时使用本方法，只需元数据时使用
+                search_papers。
         """
         # 构建高级查询字符串
         query_parts = []
@@ -113,34 +111,40 @@ class ArxivClient:
             sort_order=sort_order,
         )
 
-        import asyncio
         loop = asyncio.get_event_loop()
         try:
             # 在单独的线程中运行同步的arxiv搜索
             results = await loop.run_in_executor(None, list, self.client.results(search))
-            papers = []
-            for result in results:
-                paper = {
-                    "paper_id": result.entry_id.split("/")[-1],
-                    "title": result.title,
-                    "authors": [author.name for author in result.authors],
-                    "abstract": result.summary,
-                    "publication_date": result.published,
-                    "updated_date": result.updated,
-                    "categories": result.categories,
-                    "url": result.entry_id,
-                    "pdf_url": result.pdf_url,
-                    "doi": result.doi,
-                    "comment": result.comment,
-                    "journal_ref": result.journal_ref,
-                }
-                papers.append(paper)
-            logger.info(f"搜索完成，找到 {len(papers)} 篇论文")
-            return papers
+            logger.info(f"搜索完成，找到 {len(results)} 篇论文")
+            return results
         except Exception as e:
             logger.error(f"搜索论文失败: {str(e)}")
             return []
-            raise
+
+    async def search_papers(self, *args, **kwargs) -> List[Dict]:
+        """搜索arXiv论文并返回标准化的论文信息字典列表。
+
+        Args:
+            *args: 与search_results相同的位置参数。
+            **kwargs: 与search_results相同的关键字参数。
+
+        Returns:
+            List[Dict]: 标准化的论文信息字典列表，格式见parse_result。
+        """
+        results = await self.search_results(*args, **kwargs)
+        return [paper for paper in map(self.parse_result, results) if paper]
+
+    async def search_result_by_id(self, arxiv_id: str) -> Optional[arxiv.Result]:
+        """根据arXiv ID精确搜索单个论文，返回原始结果对象。
+
+        Args:
+            arxiv_id: arXiv论文ID，如"2310.06825"，可包含版本号或不包含。
+
+        Returns:
+            Optional[arxiv.Result]: 找到返回arxiv.Result对象，未找到返回None。
+        """
+        results = await self.search_results(query="", id_list=[arxiv_id], max_results=1)
+        return results[0] if results else None
 
     async def search_by_id(self, arxiv_id: str) -> Optional[Dict]:
         """根据arXiv ID精确搜索单个论文。
@@ -151,12 +155,8 @@ class ArxivClient:
         Returns:
             Optional[Dict]: 找到返回标准化的论文信息字典，未找到返回None。
         """
-        try:
-            results = await self.search_papers(query="", id_list=[arxiv_id], max_results=1)
-            return results[0] if results else None
-        except Exception as e:
-            logger.error(f"根据ID搜索论文失败 {arxiv_id}: {str(e)}")
-            return None
+        result = await self.search_result_by_id(arxiv_id)
+        return self.parse_result(result) if result else None
 
     @staticmethod
     def parse_result(result: arxiv.Result) -> Dict:
@@ -316,12 +316,15 @@ class ArxivClient:
         logger.info(f"成功保存 {saved_count} 篇论文到数据库")
         return saved_count
 
-    def search_and_save(
+    async def search_and_save(
         self,
         query: str,
         max_results: int = 10,
         categories: Optional[List[str]] = None,
         author: Optional[str] = None,
+        title: Optional[str] = None,
+        abstract: Optional[str] = None,
+        journal_reference: Optional[str] = None,
         download_pdfs: bool = False,
     ) -> List[Dict]:
         """搜索论文并批量保存到数据库的便捷方法。
@@ -333,6 +336,9 @@ class ArxivClient:
             max_results: 最大返回结果数，默认10。
             categories: 分类列表，如["cs.AI", "cs.CV"]。
             author: 作者名。
+            title: 标题关键词。
+            abstract: 摘要关键词。
+            journal_reference: 期刊引用关键词。
             download_pdfs: 是否同时下载PDF文件，默认False。
 
         Returns:
@@ -340,8 +346,14 @@ class ArxivClient:
         """
         logger.info(f"开始搜索论文，关键词: {query}, 最大结果数: {max_results}")
 
-        results = self.search_papers(
-            query=query, max_results=max_results, categories=categories, author=author
+        results = await self.search_results(
+            query=query,
+            max_results=max_results,
+            categories=categories,
+            author=author,
+            title=title,
+            abstract=abstract,
+            journal_reference=journal_reference,
         )
 
         papers = []
@@ -369,23 +381,6 @@ class AsyncArxivClient(ArxivClient):
     适用于FastAPI等异步框架中的调用。
     """
 
-    async def search_papers_async(self, *args, **kwargs) -> List[Dict]:
-        """异步版本的论文搜索方法。
-
-        在线程池中执行同步搜索操作，避免阻塞事件循环。
-
-        Args:
-            *args: 与同步search_papers方法相同的参数。
-            **kwargs: 与同步search_papers方法相同的关键字参数。
-
-        Returns:
-            List[Dict]: 论文结果列表。
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, lambda: list(self.search_papers(*args, **kwargs))
-        )
-
     async def download_pdf_async(self, *args, **kwargs) -> Optional[str]:
         """异步版本的PDF下载方法。
 
@@ -403,19 +398,3 @@ class AsyncArxivClient(ArxivClient):
             None, lambda: self.download_pdf(*args, **kwargs)
         )
 
-    async def search_and_save_async(self, *args, **kwargs) -> List[Dict]:
-        """异步版本的搜索并保存方法。
-
-        在线程池中执行同步操作，避免阻塞事件循环。
-
-        Args:
-            *args: 与同步search_and_save方法相同的参数。
-            **kwargs: 与同步search_and_save方法相同的关键字参数。
-
-        Returns:
-            List[Dict]: 保存成功的论文列表。
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, lambda: self.search_and_save(*args, **kwargs)
-        )
