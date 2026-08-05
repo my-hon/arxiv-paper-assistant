@@ -90,7 +90,7 @@ class ScriptGenerator:
 {json.dumps(interpretation.core_contributions, indent=2, ensure_ascii=False)}
 
 实验方法:
-{json.dumps(interpretation.experimental_methods, indent=2, ensure_ascii=False)}
+{json.dumps(interpretation.method_details, indent=2, ensure_ascii=False)}
 
 使用的数据集:
 {json.dumps(interpretation.datasets, indent=2, ensure_ascii=False)}
