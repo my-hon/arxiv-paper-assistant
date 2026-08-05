@@ -4,7 +4,7 @@
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
+from typing import List, Optional
 
 
 class Settings(BaseSettings):
@@ -20,8 +20,19 @@ class Settings(BaseSettings):
     """服务绑定的主机地址，默认绑定所有网卡"""
     PORT: int = 8000
     """服务监听的端口，默认8000"""
-    DEBUG: bool = True
-    """是否开启调试模式，生产环境请设置为False"""
+    DEBUG: bool = False
+    """是否开启调试模式，开启后会暴露API文档并启用热重载，仅用于开发环境"""
+
+    # 安全配置
+    API_KEY: str = ""
+    """API访问密钥。为空时不启用鉴权（仅建议本地开发）；
+    设置后所有 /api 接口都需要在请求头 X-API-Key 中携带该密钥。"""
+    CORS_ORIGINS: List[str] = ["http://localhost:8000"]
+    """允许的跨域来源白名单。请勿使用通配符 "*" 与凭证共用，
+    生产环境请显式列出受信任的前端来源。"""
+    ENABLE_STORAGE_STATIC: bool = False
+    """是否通过 /storage 静态路由对外暴露存储目录。
+    默认关闭，因为该目录包含SQLite数据库、PDF和复现脚本等敏感文件。"""
 
     # 大模型配置
     OPENAI_API_KEY: str = ""
