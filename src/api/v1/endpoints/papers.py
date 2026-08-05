@@ -151,7 +151,7 @@ async def get_paper_interpretation(paper_id: str):
         return {
             "paper_id": interpretation.paper_id,
             "core_contributions": interpretation.core_contributions,
-            "experimental_methods": interpretation.experimental_methods,
+            "experimental_setup": interpretation.experimental_setup,
             "datasets": interpretation.datasets,
             "conclusions": interpretation.conclusions,
             "innovations": interpretation.innovations,

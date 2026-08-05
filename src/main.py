@@ -34,6 +34,7 @@ Path(settings.PDF_STORAGE_PATH).mkdir(parents=True, exist_ok=True)
 Path(settings.SCRIPT_STORAGE_PATH).mkdir(parents=True, exist_ok=True)
 Path(settings.REPORT_STORAGE_PATH).mkdir(parents=True, exist_ok=True)
 Path("logs").mkdir(exist_ok=True)
+Path("static").mkdir(exist_ok=True)
 
 # 初始化FastAPI应用
 app = FastAPI(
