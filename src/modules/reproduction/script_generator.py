@@ -249,6 +249,11 @@ class ScriptGenerator:
                 nano_cpus=int(settings.SANDBOX_CPU_LIMIT * 1e9),
                 volumes={task_dir: {"bind": "/app", "mode": "rw"}},
                 working_dir="/app",
+                # 沙箱加固：运行的是大模型生成的不可信代码，需最小化其权限
+                network_disabled=True,
+                cap_drop=["ALL"],
+                security_opt=["no-new-privileges"],
+                pids_limit=512,
             )
 
             # 等待执行完成

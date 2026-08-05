@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 sys.path.append(str(Path(__file__).parent.parent))
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -18,6 +18,7 @@ from loguru import logger
 from src.api.v1.api import api_router
 from src.config.settings import settings
 from src.core.init import initialize_system
+from src.core.security import require_api_key
 
 # 日志配置
 logger.add(
@@ -44,21 +45,30 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None,
 )
 
-# CORS配置
+# CORS配置：仅允许白名单来源，避免通配符与凭证共用带来的跨站数据泄露风险
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 静态文件服务
-app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/storage", StaticFiles(directory=settings.STORAGE_PATH), name="storage")
+app.mount("/static", StaticFiles(directory="static", check_dir=False), name="static")
 
-# 注册API路由
-app.include_router(api_router, prefix="/api/v1")
+# 存储目录包含数据库、PDF和复现脚本等敏感文件，默认不对外暴露
+if settings.ENABLE_STORAGE_STATIC:
+    app.mount(
+        "/storage",
+        StaticFiles(directory=settings.STORAGE_PATH, check_dir=False),
+        name="storage",
+    )
+
+# 注册API路由（配置API_KEY后强制鉴权）
+app.include_router(
+    api_router, prefix="/api/v1", dependencies=[Depends(require_api_key)]
+)
 
 
 @app.on_event("startup")
