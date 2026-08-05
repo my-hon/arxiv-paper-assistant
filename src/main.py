@@ -10,13 +10,15 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 sys.path.append(str(Path(__file__).parent.parent))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from src.api.v1.api import api_router
 from src.config.settings import settings
+from src.core.exceptions import AppError
 from src.core.init import initialize_system
 
 # 日志配置
@@ -59,6 +61,28 @@ app.mount("/storage", StaticFiles(directory=settings.STORAGE_PATH), name="storag
 
 # 注册API路由
 app.include_router(api_router, prefix="/api/v1")
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    """将业务异常转换为带有具体原因的HTTP响应"""
+    logger.warning(f"{request.method} {request.url.path} 处理失败: {exc.message}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.message, "error_type": exc.__class__.__name__},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """记录未预期异常的完整堆栈，避免错误被静默丢弃"""
+    logger.opt(exception=exc).error(
+        f"{request.method} {request.url.path} 发生未处理异常: {str(exc)}"
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"服务内部错误: {str(exc)}", "error_type": "InternalServerError"},
+    )
 
 
 @app.on_event("startup")

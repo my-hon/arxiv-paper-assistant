@@ -39,7 +39,7 @@ async def initialize_system():
         Base.metadata.create_all(bind=engine)
         logger.info("数据库初始化完成")
     except Exception as e:
-        logger.error(f"数据库初始化失败: {str(e)}")
+        logger.exception(f"数据库初始化失败: {str(e)}")
         raise
     
     # 初始化向量存储
@@ -49,7 +49,7 @@ async def initialize_system():
         await vector_store.initialize()
         logger.info("向量存储初始化完成")
     except Exception as e:
-        logger.warning(f"向量存储初始化失败: {str(e)}，知识库功能将不可用")
+        logger.opt(exception=True).warning(f"向量存储初始化失败: {str(e)}，知识库功能将不可用")
     
     # 初始化爬虫组件
     try:
@@ -57,7 +57,7 @@ async def initialize_system():
         arxiv_crawler = ArxivCrawler()
         logger.info("爬虫组件初始化完成")
     except Exception as e:
-        logger.error(f"爬虫组件初始化失败: {str(e)}")
+        logger.exception(f"爬虫组件初始化失败: {str(e)}")
         raise
     
     # 初始化论文解读组件
@@ -66,7 +66,7 @@ async def initialize_system():
         interpreter = PaperInterpreter()
         logger.info("论文解读组件初始化完成")
     except Exception as e:
-        logger.error(f"论文解读组件初始化失败: {str(e)}")
+        logger.exception(f"论文解读组件初始化失败: {str(e)}")
         raise
     
     # 初始化复现组件
@@ -75,7 +75,7 @@ async def initialize_system():
         script_generator = ScriptGenerator()
         logger.info("复现组件初始化完成")
     except Exception as e:
-        logger.error(f"复现组件初始化失败: {str(e)}")
+        logger.exception(f"复现组件初始化失败: {str(e)}")
         raise
     
     logger.info("所有系统组件初始化完成")

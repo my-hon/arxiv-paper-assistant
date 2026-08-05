@@ -1,10 +1,12 @@
 """
 论文解读API接口
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
+from loguru import logger
 from pydantic import BaseModel
-from typing import Optional, List, Dict
+from typing import Optional, List
 
+from src.core.exceptions import AppError, NotFoundError
 from src.modules.interpretation.paper_interpreter import PaperInterpreter
 from src.db.database import get_db
 from src.db.models import PaperInterpretation
@@ -32,34 +34,23 @@ async def interpret_paper(
     """
     对指定论文进行结构化解读
     """
-    try:
-        interpreter = PaperInterpreter()
-        result = await interpreter.interpret_paper(paper_id, use_abstract_only)
-        
-        if not result:
-            raise HTTPException(status_code=500, detail="论文解读失败")
-            
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"解读失败: {str(e)}")
+    interpreter = PaperInterpreter()
+    return await interpreter.interpret_paper(paper_id, use_abstract_only)
 
-@router.get("/{paper_id}", response_model=Optional[InterpretationResponse], summary="获取论文解读结果")
+@router.get("/{paper_id}", response_model=InterpretationResponse, summary="获取论文解读结果")
 async def get_interpretation(paper_id: str):
     """
     获取已有的论文解读结果
     """
+    db = next(get_db())
     try:
-        db = next(get_db())
         interpretation = db.query(PaperInterpretation).filter(
             PaperInterpretation.paper_id == paper_id
         ).first()
-        
+
         if not interpretation:
-            return None
-            
+            raise NotFoundError(f"论文尚未解读: {paper_id}")
+
         return {
             "paper_id": interpretation.paper_id,
             "core_contributions": interpretation.core_contributions,
@@ -73,9 +64,8 @@ async def get_interpretation(paper_id: str):
             "interpretation_model": interpretation.interpretation_model,
             "interpretation_time": interpretation.interpretation_time.isoformat() if interpretation.interpretation_time else None
         }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取解读结果失败: {str(e)}")
+    finally:
+        db.close()
 
 @router.post("/batch", summary="批量解读论文")
 async def batch_interpret(
@@ -84,26 +74,27 @@ async def batch_interpret(
 ):
     """
     批量解读多篇论文
+
+    单篇失败不会中断整体流程，失败原因会随响应一并返回。
     """
     results = []
     failed = []
-    
+
+    interpreter = PaperInterpreter()
     for paper_id in paper_ids:
         try:
-            interpreter = PaperInterpreter()
-            result = await interpreter.interpret_paper(paper_id, use_abstract_only)
-            if result:
-                results.append(result)
-            else:
-                failed.append(paper_id)
+            results.append(await interpreter.interpret_paper(paper_id, use_abstract_only))
+        except AppError as e:
+            logger.warning(f"批量解读失败 {paper_id}: {e.message}")
+            failed.append({"paper_id": paper_id, "error": e.message})
         except Exception as e:
-            failed.append(paper_id)
-            continue
-            
+            logger.exception(f"批量解读发生未预期错误 {paper_id}: {str(e)}")
+            failed.append({"paper_id": paper_id, "error": str(e)})
+
     return {
         "total": len(paper_ids),
         "success": len(results),
         "failed": len(failed),
-        "failed_ids": failed,
+        "failed_papers": failed,
         "results": results
     }

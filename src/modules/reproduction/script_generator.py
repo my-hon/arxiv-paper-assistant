@@ -15,6 +15,7 @@ from langchain_openai import ChatOpenAI
 from loguru import logger
 
 from src.config.settings import settings
+from src.core.exceptions import NotFoundError, ReproductionError, ValidationError
 from src.db.database import get_db
 from src.db.models import Paper, PaperInterpretation, ReproductionTask
 
@@ -31,10 +32,12 @@ class ScriptGenerator:
             temperature=0.1,
         )
         self.docker_client = None
+        self.docker_error: Optional[str] = None
         try:
             self.docker_client = docker.DockerClient(base_url=settings.DOCKER_SOCKET)
             logger.info("Docker客户端连接成功")
         except DockerException as e:
+            self.docker_error = str(e)
             logger.warning(f"Docker连接失败，复现功能将不可用: {str(e)}")
 
     async def generate_script(self, paper_id: str) -> Optional[Dict]:
@@ -42,14 +45,17 @@ class ScriptGenerator:
         生成复现脚本
         :param paper_id: 论文ID
         :return: 生成结果
+        :raises NotFoundError: 论文不存在
+        :raises ValidationError: 论文尚未解读
+        :raises ReproductionError: 大模型生成、文件写入或入库失败
         """
         db = next(get_db())
 
         # 获取论文和解读结果
         paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
         if not paper:
-            logger.error(f"论文不存在: {paper_id}")
-            return None
+            db.close()
+            raise NotFoundError(f"论文不存在: {paper_id}")
 
         interpretation = (
             db.query(PaperInterpretation)
@@ -58,8 +64,8 @@ class ScriptGenerator:
         )
 
         if not interpretation:
-            logger.error(f"论文尚未解读: {paper_id}")
-            return None
+            db.close()
+            raise ValidationError(f"论文尚未解读，无法生成复现脚本: {paper_id}")
 
         # 创建任务ID
         task_id = str(uuid.uuid4())
@@ -134,8 +140,9 @@ class ScriptGenerator:
             )
 
             if not script_content:
-                logger.error("未能提取到Python代码")
-                return None
+                raise ReproductionError(
+                    f"大模型返回内容中未能提取到Python代码: {paper_id}"
+                )
 
             # 保存文件
             script_path = os.path.join(task_dir, "reproduce.py")
@@ -176,10 +183,15 @@ class ScriptGenerator:
                 "dockerfile_path": dockerfile_path,
             }
 
-        except Exception as e:
-            logger.error(f"生成复现脚本失败: {str(e)}")
+        except ReproductionError:
             db.rollback()
-            return None
+            raise
+        except Exception as e:
+            db.rollback()
+            logger.exception(f"生成复现脚本失败: {str(e)}")
+            raise ReproductionError(f"生成复现脚本失败 {paper_id}: {str(e)}") from e
+        finally:
+            db.close()
 
     def _extract_code_block(self, content: str, language: str) -> Optional[str]:
         """从响应中提取指定语言的代码块"""
@@ -206,10 +218,14 @@ class ScriptGenerator:
         运行复现任务
         :param task_id: 任务ID
         :return: 运行结果
+        :raises NotFoundError: 任务不存在
+        :raises ValidationError: 任务正在运行中
+        :raises ReproductionError: Docker不可用或执行失败
         """
         if not self.docker_client:
-            logger.error("Docker不可用，无法运行复现任务")
-            return None
+            raise ReproductionError(
+                f"Docker不可用，无法运行复现任务: {self.docker_error or '未连接'}"
+            )
 
         db = next(get_db())
         task = (
@@ -219,17 +235,18 @@ class ScriptGenerator:
         )
 
         if not task:
-            logger.error(f"复现任务不存在: {task_id}")
-            return None
+            db.close()
+            raise NotFoundError(f"复现任务不存在: {task_id}")
 
         if task.status == "running":
-            logger.warning(f"任务正在运行中: {task_id}")
-            return None
+            db.close()
+            raise ValidationError(f"任务正在运行中: {task_id}")
 
         # 更新任务状态
         task.status = "running"
         db.commit()
 
+        container = None
         try:
             task_dir = os.path.dirname(task.script_path)
 
@@ -257,9 +274,6 @@ class ScriptGenerator:
 
             # 获取结果
             exit_code = wait_result["StatusCode"]
-
-            # 清理容器
-            container.remove()
 
             # 更新任务状态
             if exit_code == 0:
@@ -299,8 +313,21 @@ class ScriptGenerator:
             }
 
         except Exception as e:
-            logger.error(f"运行复现任务失败: {str(e)}")
-            task.status = "failed"
-            task.error_message = str(e)
-            db.commit()
-            return None
+            logger.exception(f"运行复现任务失败: {str(e)}")
+            try:
+                task.status = "failed"
+                task.error_message = str(e)
+                task.completed_at = datetime.utcnow()
+                db.commit()
+            except Exception as commit_error:
+                db.rollback()
+                logger.exception(f"记录任务失败状态失败: {str(commit_error)}")
+            raise ReproductionError(f"运行复现任务失败 {task_id}: {str(e)}") from e
+
+        finally:
+            if container is not None:
+                try:
+                    container.remove(force=True)
+                except Exception as cleanup_error:
+                    logger.warning(f"清理复现容器失败 {task_id}: {str(cleanup_error)}")
+            db.close()

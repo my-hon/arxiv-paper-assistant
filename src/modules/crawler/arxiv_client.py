@@ -6,12 +6,13 @@
 
 import asyncio
 import os
-from typing import Dict, Generator, List, Optional
+from typing import Dict, List, Optional
 
 import arxiv
 from loguru import logger
 
 from src.config.settings import settings
+from src.core.exceptions import CrawlerError, StorageError
 from src.db.database import get_db
 
 
@@ -50,7 +51,7 @@ class ArxivClient:
         id_list: Optional[List[str]] = None,
         sort_by: arxiv.SortCriterion = arxiv.SortCriterion.SubmittedDate,
         sort_order: arxiv.SortOrder = arxiv.SortOrder.Descending,
-    ) -> Generator[arxiv.Result, None, None]:
+    ) -> List[Dict]:
         """根据条件搜索arXiv论文。
 
         Args:
@@ -70,11 +71,10 @@ class ArxivClient:
             sort_order: 排序顺序，可选值：Ascending, Descending，默认降序。
 
         Returns:
-            Generator[arxiv.Result, None, None]: 论文结果生成器，每个元素为
-                arxiv.Result对象。
+            List[Dict]: 标准化的论文信息字典列表。
 
         Raises:
-            Exception: 当API请求失败时抛出异常。
+            CrawlerError: 当arXiv API请求失败时抛出。
         """
         # 构建高级查询字符串
         query_parts = []
@@ -113,7 +113,6 @@ class ArxivClient:
             sort_order=sort_order,
         )
 
-        import asyncio
         loop = asyncio.get_event_loop()
         try:
             # 在单独的线程中运行同步的arxiv搜索
@@ -138,9 +137,8 @@ class ArxivClient:
             logger.info(f"搜索完成，找到 {len(papers)} 篇论文")
             return papers
         except Exception as e:
-            logger.error(f"搜索论文失败: {str(e)}")
-            return []
-            raise
+            logger.exception(f"搜索论文失败: {str(e)}")
+            raise CrawlerError(f"arXiv搜索失败: {str(e)}") from e
 
     async def search_by_id(self, arxiv_id: str) -> Optional[Dict]:
         """根据arXiv ID精确搜索单个论文。
@@ -150,13 +148,12 @@ class ArxivClient:
 
         Returns:
             Optional[Dict]: 找到返回标准化的论文信息字典，未找到返回None。
+
+        Raises:
+            CrawlerError: arXiv接口调用失败时抛出。
         """
-        try:
-            results = await self.search_papers(query="", id_list=[arxiv_id], max_results=1)
-            return results[0] if results else None
-        except Exception as e:
-            logger.error(f"根据ID搜索论文失败 {arxiv_id}: {str(e)}")
-            return None
+        results = await self.search_papers(query="", id_list=[arxiv_id], max_results=1)
+        return results[0] if results else None
 
     @staticmethod
     def parse_result(result: arxiv.Result) -> Dict:
@@ -184,6 +181,9 @@ class ArxivClient:
                 journal_ref: 期刊引用信息（如有）
                 comment: 论文评论信息（如有）
                 primary_category: 主要分类标签（如有）
+
+        Raises:
+            CrawlerError: 结果字段缺失或格式异常导致解析失败时抛出。
         """
         try:
             # 提取arXiv ID，去掉版本号
@@ -215,8 +215,8 @@ class ArxivClient:
             return paper
 
         except Exception as e:
-            logger.error(f"解析论文结果失败: {str(e)}")
-            return {}
+            logger.exception(f"解析论文结果失败: {str(e)}")
+            raise CrawlerError(f"解析arXiv论文结果失败: {str(e)}") from e
 
     def download_pdf(
         self,
@@ -234,7 +234,10 @@ class ArxivClient:
             filename: 保存文件名，默认使用"arxiv_{id}.pdf"格式。
 
         Returns:
-            Optional[str]: 下载成功返回本地文件路径，失败返回None。
+            Optional[str]: 下载成功返回本地文件路径，论文没有PDF链接时返回None。
+
+        Raises:
+            CrawlerError: 下载过程失败时抛出。
         """
         if not result.pdf_url:
             logger.warning(f"论文 {result.entry_id} 没有PDF链接")
@@ -264,8 +267,43 @@ class ArxivClient:
             return downloaded_path
 
         except Exception as e:
-            logger.error(f"下载PDF失败 {result.title}: {str(e)}")
+            logger.exception(f"下载PDF失败 {result.title}: {str(e)}")
+            raise CrawlerError(f"下载PDF失败 {result.title}: {str(e)}") from e
+
+    async def download_pdf_by_id(
+        self,
+        arxiv_id: str,
+        save_dir: Optional[str] = None,
+        filename: Optional[str] = None,
+    ) -> Optional[str]:
+        """根据arXiv ID下载论文PDF。
+
+        Args:
+            arxiv_id: arXiv论文ID。
+            save_dir: 保存目录，默认使用settings.PDF_STORAGE_PATH。
+            filename: 保存文件名。
+
+        Returns:
+            Optional[str]: 下载成功返回本地文件路径，未找到论文时返回None。
+
+        Raises:
+            CrawlerError: arXiv接口调用或下载失败时抛出。
+        """
+        loop = asyncio.get_event_loop()
+        try:
+            results = await loop.run_in_executor(
+                None, list, self.client.results(arxiv.Search(id_list=[arxiv_id]))
+            )
+        except Exception as e:
+            logger.exception(f"根据ID获取arXiv论文失败 {arxiv_id}: {str(e)}")
+            raise CrawlerError(f"根据ID获取arXiv论文失败 {arxiv_id}: {str(e)}") from e
+
+        if not results:
             return None
+
+        return await loop.run_in_executor(
+            None, lambda: self.download_pdf(results[0], save_dir, filename)
+        )
 
     def save_papers_to_db(self, papers: List[Dict]) -> int:
         """批量保存论文信息到数据库。
@@ -278,11 +316,15 @@ class ArxivClient:
 
         Returns:
             int: 实际保存成功的论文数量。
+
+        Raises:
+            StorageError: 数据库提交失败时抛出。
         """
         from src.db.models import Paper
 
         db = next(get_db())
         saved_count = 0
+        failed_ids: List[str] = []
 
         # 获取Paper模型的所有字段
         model_fields = {c.name for c in Paper.__table__.columns}
@@ -309,19 +351,35 @@ class ArxivClient:
                 db.add(paper)
                 saved_count += 1
             except Exception as e:
-                logger.error(f"保存论文失败 {paper_data['paper_id']}: {str(e)}")
+                logger.exception(f"保存论文失败 {paper_data['paper_id']}: {str(e)}")
+                failed_ids.append(paper_data["paper_id"])
+                db.rollback()
                 continue
 
-        db.commit()
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.exception(f"提交论文数据失败: {str(e)}")
+            raise StorageError(f"保存论文到数据库失败: {str(e)}") from e
+        finally:
+            db.close()
+
+        if failed_ids:
+            logger.warning(f"以下论文保存失败: {', '.join(failed_ids)}")
+
         logger.info(f"成功保存 {saved_count} 篇论文到数据库")
         return saved_count
 
-    def search_and_save(
+    async def search_and_save(
         self,
         query: str,
         max_results: int = 10,
         categories: Optional[List[str]] = None,
         author: Optional[str] = None,
+        title: Optional[str] = None,
+        abstract: Optional[str] = None,
+        journal_reference: Optional[str] = None,
         download_pdfs: bool = False,
     ) -> List[Dict]:
         """搜索论文并批量保存到数据库的便捷方法。
@@ -333,26 +391,35 @@ class ArxivClient:
             max_results: 最大返回结果数，默认10。
             categories: 分类列表，如["cs.AI", "cs.CV"]。
             author: 作者名。
+            title: 标题关键词。
+            abstract: 摘要关键词。
+            journal_reference: 期刊引用关键词。
             download_pdfs: 是否同时下载PDF文件，默认False。
 
         Returns:
             List[Dict]: 保存成功的论文信息列表。
+
+        Raises:
+            CrawlerError: 搜索失败时抛出。
+            StorageError: 写入数据库失败时抛出。
         """
         logger.info(f"开始搜索论文，关键词: {query}, 最大结果数: {max_results}")
 
-        results = self.search_papers(
-            query=query, max_results=max_results, categories=categories, author=author
+        papers = await self.search_papers(
+            query=query,
+            max_results=max_results,
+            categories=categories,
+            author=author,
+            title=title,
+            abstract=abstract,
+            journal_reference=journal_reference,
         )
 
-        papers = []
-        for result in results:
-            paper = self.parse_result(result)
-            if paper:
-                papers.append(paper)
-
-                if download_pdfs:
-                    pdf_path = self.download_pdf(result)
-                    paper["local_pdf_path"] = pdf_path
+        if download_pdfs:
+            for paper in papers:
+                paper["local_pdf_path"] = await self.download_pdf_by_id(
+                    paper["paper_id"]
+                )
 
         if papers:
             self.save_papers_to_db(papers)
@@ -361,61 +428,5 @@ class ArxivClient:
         return papers
 
 
-# 异步兼容层，保持与原有API接口一致
-class AsyncArxivClient(ArxivClient):
-    """异步版本的Arxiv客户端，兼容同步接口。
-
-    通过线程池封装同步方法，提供异步接口，保持与原有异步API的兼容性。
-    适用于FastAPI等异步框架中的调用。
-    """
-
-    async def search_papers_async(self, *args, **kwargs) -> List[Dict]:
-        """异步版本的论文搜索方法。
-
-        在线程池中执行同步搜索操作，避免阻塞事件循环。
-
-        Args:
-            *args: 与同步search_papers方法相同的参数。
-            **kwargs: 与同步search_papers方法相同的关键字参数。
-
-        Returns:
-            List[Dict]: 论文结果列表。
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, lambda: list(self.search_papers(*args, **kwargs))
-        )
-
-    async def download_pdf_async(self, *args, **kwargs) -> Optional[str]:
-        """异步版本的PDF下载方法。
-
-        在线程池中执行同步下载操作，避免阻塞事件循环。
-
-        Args:
-            *args: 与同步download_pdf方法相同的参数。
-            **kwargs: 与同步download_pdf方法相同的关键字参数。
-
-        Returns:
-            Optional[str]: 下载成功返回本地文件路径，失败返回None。
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, lambda: self.download_pdf(*args, **kwargs)
-        )
-
-    async def search_and_save_async(self, *args, **kwargs) -> List[Dict]:
-        """异步版本的搜索并保存方法。
-
-        在线程池中执行同步操作，避免阻塞事件循环。
-
-        Args:
-            *args: 与同步search_and_save方法相同的参数。
-            **kwargs: 与同步search_and_save方法相同的关键字参数。
-
-        Returns:
-            List[Dict]: 保存成功的论文列表。
-        """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, lambda: self.search_and_save(*args, **kwargs)
-        )
+# 兼容别名，保持与原有导入路径一致
+AsyncArxivClient = ArxivClient

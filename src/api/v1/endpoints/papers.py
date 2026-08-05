@@ -1,13 +1,16 @@
 """
 论文管理API接口
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
+from loguru import logger
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
+from src.core.exceptions import NotFoundError, StorageError, VectorStoreError
 from src.db.database import get_db
 from src.db.models import Paper, PaperInterpretation
+from src.modules.knowledge.vector_store import VectorStore
 
 router = APIRouter()
 
@@ -42,10 +45,10 @@ async def list_papers(
     """
     获取论文列表，支持分页和过滤
     """
+    db = next(get_db())
     try:
-        db = next(get_db())
         query = db.query(Paper)
-        
+
         if source:
             query = query.filter(Paper.source == source)
         if status:
@@ -54,10 +57,10 @@ async def list_papers(
             query = query.filter(Paper.categories.contains(category))
         if keyword:
             query = query.filter(Paper.title.contains(keyword) | Paper.abstract.contains(keyword))
-            
+
         total = query.count()
         papers = query.order_by(Paper.publication_date.desc()).offset(offset).limit(limit).all()
-        
+
         return {
             "total": total,
             "papers": [
@@ -75,79 +78,85 @@ async def list_papers(
                 for paper in papers
             ]
         }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取论文列表失败: {str(e)}")
+    finally:
+        db.close()
 
 @router.get("/{paper_id}", response_model=PaperResponse, summary="获取论文详情")
 async def get_paper_detail(paper_id: str):
     """
     获取指定论文的详细信息
     """
+    db = next(get_db())
     try:
-        db = next(get_db())
         paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
-        
+
         if not paper:
-            raise HTTPException(status_code=404, detail="论文不存在")
-            
+            raise NotFoundError(f"论文不存在: {paper_id}")
+
         return paper
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取论文详情失败: {str(e)}")
+    finally:
+        db.close()
 
 @router.delete("/{paper_id}", summary="删除论文")
 async def delete_paper(paper_id: str):
     """
     删除指定论文及其相关数据
+
+    数据库删除成功后，向量索引清理失败不会回滚删除，但会在响应中明确告知。
     """
+    db = next(get_db())
     try:
-        db = next(get_db())
         paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
-        
+
         if not paper:
-            raise HTTPException(status_code=404, detail="论文不存在")
-            
+            raise NotFoundError(f"论文不存在: {paper_id}")
+
         # 删除相关解读结果
         db.query(PaperInterpretation).filter(PaperInterpretation.paper_id == paper_id).delete()
-        
+
         # 删除论文
         db.delete(paper)
-        db.commit()
-        
-        # 从向量索引中删除
-        from src.modules.knowledge.vector_store import VectorStore
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.exception(f"删除论文失败 {paper_id}: {str(e)}")
+            raise StorageError(f"删除论文失败: {str(e)}") from e
+    finally:
+        db.close()
+
+    # 从向量索引中删除
+    index_warning = None
+    try:
         vector_store = VectorStore()
         await vector_store.initialize()
         await vector_store.delete_paper_from_index(paper_id)
-        
-        return {
-            "paper_id": paper_id,
-            "message": "删除成功"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"删除论文失败: {str(e)}")
+    except VectorStoreError as e:
+        index_warning = str(e)
+        logger.warning(f"论文已删除但向量索引未清理 {paper_id}: {index_warning}")
+
+    response = {
+        "paper_id": paper_id,
+        "message": "删除成功"
+    }
+    if index_warning:
+        response["warning"] = f"向量索引清理失败: {index_warning}"
+    return response
 
 @router.get("/{paper_id}/interpretation", summary="获取论文解读结果")
 async def get_paper_interpretation(paper_id: str):
     """
     获取指定论文的解读结果
     """
+    db = next(get_db())
     try:
-        db = next(get_db())
         interpretation = db.query(PaperInterpretation).filter(
             PaperInterpretation.paper_id == paper_id
         ).first()
-        
+
         if not interpretation:
-            raise HTTPException(status_code=404, detail="论文尚未解读")
-            
+            raise NotFoundError(f"论文尚未解读: {paper_id}")
+
         return {
             "paper_id": interpretation.paper_id,
             "core_contributions": interpretation.core_contributions,
@@ -160,8 +169,5 @@ async def get_paper_interpretation(paper_id: str):
             "confidence_score": interpretation.confidence_score,
             "interpretation_time": interpretation.interpretation_time
         }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取解读结果失败: {str(e)}")
+    finally:
+        db.close()
