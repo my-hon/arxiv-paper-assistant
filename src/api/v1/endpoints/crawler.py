@@ -7,7 +7,10 @@ from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 
-from src.modules.crawler.arxiv_client import ArxivClient, AsyncArxivClient
+from src.core.errors import handle_api_errors
+from src.db.database import session_scope
+from src.db.models import Paper
+from src.modules.crawler.arxiv_client import AsyncArxivClient
 
 router = APIRouter()
 
@@ -27,55 +30,41 @@ class SearchResponse(BaseModel):
     saved_count: int
 
 @router.post("/search/arxiv", response_model=SearchResponse, summary="搜索arXiv论文")
+@handle_api_errors("搜索失败")
 async def search_arxiv(request: SearchRequest):
     """
     从arXiv搜索论文
     """
-    try:
-        client = AsyncArxivClient()
+    client = AsyncArxivClient()
 
-        # 执行搜索
-        results = client.search_papers(
-            query=request.query,
-            max_results=request.max_results,
-            categories=request.categories,
-            author=request.author
-        )
+    papers = await client.search_papers(
+        query=request.query,
+        max_results=request.max_results,
+        categories=request.categories,
+        author=request.author
+    )
 
-        # 解析结果
-        papers = []
-        for result in results:
-            paper = client.parse_result(result)
-            if paper:
-                papers.append(paper)
+    # 支持分页（简单实现，跳过前面的结果）
+    if request.start > 0 and len(papers) > request.start:
+        papers = papers[request.start:]
 
-        # 支持分页（简单实现，跳过前面的结果）
-        if request.start > 0 and len(papers) > request.start:
-            papers = papers[request.start:]
+    saved_count = 0
+    if request.save_to_db and papers:
+        saved_count = client.save_papers_to_db(papers)
 
-        saved_count = 0
-        if request.save_to_db and papers:
-            saved_count = client.save_papers_to_db(papers)
-
-        return {
-            "total": len(papers),
-            "papers": papers,
-            "saved_count": saved_count
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
+    return {
+        "total": len(papers),
+        "papers": papers,
+        "saved_count": saved_count
+    }
 
 @router.post("/download/{paper_id}", summary="下载论文PDF")
+@handle_api_errors("下载失败")
 async def download_paper(paper_id: str):
     """
     下载指定论文的PDF
     """
-    try:
-        from src.db.database import get_db
-        from src.db.models import Paper
-
-        db = next(get_db())
+    with session_scope() as db:
         paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
 
         if not paper:
@@ -95,8 +84,7 @@ async def download_paper(paper_id: str):
         client = AsyncArxivClient()
 
         # 搜索论文获取最新信息
-        arxiv_id = paper.arxiv_id
-        result = client.search_by_id(arxiv_id)
+        result = await client.search_result_by_id(paper.arxiv_id)
 
         if not result:
             raise HTTPException(status_code=404, detail="未找到对应的arXiv论文")
@@ -118,11 +106,6 @@ async def download_paper(paper_id: str):
             "message": "下载成功"
         }
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
-
 class AdvancedSearchRequest(BaseModel):
     """高级搜索请求模型"""
     query: Optional[str] = Query("", description="通用搜索关键词")
@@ -137,59 +120,50 @@ class AdvancedSearchRequest(BaseModel):
 
 
 @router.post("/search/arxiv/advanced", summary="高级搜索arXiv论文")
+@handle_api_errors("高级搜索失败")
 async def advanced_search_arxiv(request: AdvancedSearchRequest):
     """
     高级搜索arXiv论文，支持多维度筛选
     """
-    try:
-        client = AsyncArxivClient()
+    client = AsyncArxivClient()
 
-        # 执行搜索
-        papers = client.search_and_save(
-            query=request.query,
-            max_results=request.max_results,
-            categories=request.categories,
-            author=request.author,
-            title=request.title,
-            abstract=request.abstract,
-            journal_reference=request.journal_reference,
-            download_pdfs=request.download_pdfs
-        )
+    papers = await client.search_and_save(
+        query=request.query,
+        max_results=request.max_results,
+        categories=request.categories,
+        author=request.author,
+        title=request.title,
+        abstract=request.abstract,
+        journal_reference=request.journal_reference,
+        download_pdfs=request.download_pdfs
+    )
 
-        return {
-            "total": len(papers),
-            "papers": papers,
-            "saved_count": len(papers),
-            "downloaded_pdfs": sum(1 for p in papers if p.get("local_pdf_path"))
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"高级搜索失败: {str(e)}")
+    return {
+        "total": len(papers),
+        "papers": papers,
+        "saved_count": len(papers),
+        "downloaded_pdfs": sum(1 for p in papers if p.get("local_pdf_path"))
+    }
 
 
 @router.get("/search/arxiv/id/{arxiv_id}", summary="根据arXiv ID搜索论文")
+@handle_api_errors("搜索失败")
 async def search_by_arxiv_id(arxiv_id: str, save_to_db: bool = Query(True, description="是否保存到数据库")):
     """
     根据arXiv ID搜索单个论文
     """
-    try:
-        client = AsyncArxivClient()
-        result = client.search_by_id(arxiv_id)
+    client = AsyncArxivClient()
+    paper = await client.search_by_id(arxiv_id)
 
-        if not result:
-            raise HTTPException(status_code=404, detail="未找到该论文")
+    if not paper:
+        raise HTTPException(status_code=404, detail="未找到该论文")
 
-        paper = client.parse_result(result)
+    if save_to_db:
+        client.save_papers_to_db([paper])
 
-        if save_to_db and paper:
-            client.save_papers_to_db([paper])
-
-        return {
-            "paper": paper
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
+    return {
+        "paper": paper
+    }
 
 
 @router.get("/sources", summary="获取支持的数据源")

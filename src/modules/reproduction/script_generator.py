@@ -15,6 +15,7 @@ from langchain_openai import ChatOpenAI
 from loguru import logger
 
 from src.config.settings import settings
+from src.core.serializers import format_authors, format_date
 from src.db.database import get_db
 from src.db.models import Paper, PaperInterpretation, ReproductionTask
 
@@ -83,14 +84,17 @@ class ScriptGenerator:
 请根据以下论文信息生成复现代码：
 
 论文标题: {paper.title}
-作者: {", ".join(paper.authors)}
-发表日期: {paper.publication_date.strftime("%Y-%m-%d") if paper.publication_date else "未知"}
+作者: {format_authors(paper.authors)}
+发表日期: {format_date(paper.publication_date)}
 
 核心贡献:
 {json.dumps(interpretation.core_contributions, indent=2, ensure_ascii=False)}
 
 实验方法:
-{json.dumps(interpretation.experimental_methods, indent=2, ensure_ascii=False)}
+{json.dumps(interpretation.method_details, indent=2, ensure_ascii=False)}
+
+实验设置:
+{json.dumps(interpretation.experimental_setup, indent=2, ensure_ascii=False)}
 
 使用的数据集:
 {json.dumps(interpretation.datasets, indent=2, ensure_ascii=False)}
