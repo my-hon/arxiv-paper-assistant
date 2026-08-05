@@ -10,6 +10,7 @@ from chromadb.config import Settings as ChromaSettings
 from chromadb.utils import embedding_functions
 
 from src.config.settings import settings
+from src.core.exceptions import NotFoundError, VectorStoreError
 from src.db.models import Paper, PaperInterpretation
 from src.db.database import get_db
 
@@ -59,38 +60,68 @@ class VectorStore:
             logger.info("向量存储初始化完成")
 
         except Exception as e:
-            logger.error(f"向量存储初始化失败: {str(e)}")
-            raise
+            logger.exception(f"向量存储初始化失败: {str(e)}")
+            raise VectorStoreError(f"向量存储初始化失败: {str(e)}") from e
 
     async def add_paper_to_index(self, paper_id: str) -> bool:
         """
         将论文添加到向量索引
         :param paper_id: 论文ID
         :return: 是否成功
+        :raises NotFoundError: 论文不存在
+        :raises VectorStoreError: 向量存储未初始化或写入失败
         """
-        if not self.paper_collection:
-            logger.error("向量存储未初始化")
-            return False
+        self._ensure_initialized()
 
         db = next(get_db())
-        paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
+        try:
+            paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
 
-        if not paper:
-            logger.error(f"论文不存在: {paper_id}")
-            return False
+            if not paper:
+                raise NotFoundError(f"论文不存在: {paper_id}")
 
-        # 检查是否已存在于索引中
-        existing = self.paper_collection.get(ids=[paper_id])
-        if existing["ids"]:
-            logger.info(f"论文已在索引中: {paper_id}")
-            return True
+            # 检查是否已存在于索引中
+            try:
+                existing = self.paper_collection.get(ids=[paper_id])
+            except Exception as e:
+                logger.exception(f"查询向量索引失败: {str(e)}")
+                raise VectorStoreError(f"查询向量索引失败: {str(e)}") from e
 
-        # 获取解读结果（如果有）
-        interpretation = (
-            db.query(PaperInterpretation)
-            .filter(PaperInterpretation.paper_id == paper_id)
-            .first()
-        )
+            if existing["ids"]:
+                logger.info(f"论文已在索引中: {paper_id}")
+                return True
+
+            # 获取解读结果（如果有）
+            interpretation = (
+                db.query(PaperInterpretation)
+                .filter(PaperInterpretation.paper_id == paper_id)
+                .first()
+            )
+            content, metadata = self._build_index_payload(paper, paper_id, interpretation)
+        finally:
+            db.close()
+
+        try:
+            self.paper_collection.add(
+                ids=[paper_id], documents=[content], metadatas=[metadata]
+            )
+        except Exception as e:
+            logger.exception(f"添加论文到索引失败: {str(e)}")
+            raise VectorStoreError(f"添加论文到索引失败: {str(e)}") from e
+
+        logger.info(f"论文已添加到向量索引: {paper_id}")
+        return True
+
+    def _ensure_initialized(self) -> None:
+        """确保向量存储已初始化，否则抛出异常。"""
+        if not self.paper_collection:
+            raise VectorStoreError("向量存储未初始化，知识库功能不可用")
+
+    @staticmethod
+    def _build_index_payload(
+        paper: Paper, paper_id: str, interpretation: Optional[PaperInterpretation]
+    ) -> tuple[str, Dict]:
+        """构建写入向量库的文本内容和元数据。"""
 
         # 构建索引内容
         content_parts = [
@@ -125,17 +156,7 @@ class VectorStore:
             "status": paper.status,
         }
 
-        try:
-            self.paper_collection.add(
-                ids=[paper_id], documents=[content], metadatas=[metadata]
-            )
-
-            logger.info(f"论文已添加到向量索引: {paper_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"添加论文到索引失败: {str(e)}")
-            return False
+        return content, metadata
 
     async def search_papers(
         self, query: str, limit: int = 10, filter_conditions: Optional[Dict] = None
@@ -146,10 +167,9 @@ class VectorStore:
         :param limit: 返回结果数量
         :param filter_conditions: 过滤条件，如{"source": "arxiv"}
         :return: 搜索结果列表
+        :raises VectorStoreError: 向量存储未初始化或查询失败
         """
-        if not self.paper_collection:
-            logger.error("向量存储未初始化")
-            return []
+        self._ensure_initialized()
 
         try:
             results = self.paper_collection.query(
@@ -187,8 +207,8 @@ class VectorStore:
             return papers
 
         except Exception as e:
-            logger.error(f"搜索论文失败: {str(e)}")
-            return []
+            logger.exception(f"搜索论文失败: {str(e)}")
+            raise VectorStoreError(f"语义搜索失败: {str(e)}") from e
 
     async def get_similar_papers(self, paper_id: str, limit: int = 10) -> List[Dict]:
         """
@@ -196,10 +216,10 @@ class VectorStore:
         :param paper_id: 论文ID
         :param limit: 返回结果数量
         :return: 相似论文列表
+        :raises NotFoundError: 论文不在索引中
+        :raises VectorStoreError: 向量存储未初始化或查询失败
         """
-        if not self.paper_collection:
-            logger.error("向量存储未初始化")
-            return []
+        self._ensure_initialized()
 
         try:
             # 获取论文的向量
@@ -207,9 +227,8 @@ class VectorStore:
                 ids=[paper_id], include=["embeddings"]
             )
 
-            if not paper_data["embeddings"]:
-                logger.error(f"论文不在索引中: {paper_id}")
-                return []
+            if len(paper_data["embeddings"]) == 0:
+                raise NotFoundError(f"论文不在向量索引中: {paper_id}")
 
             embedding = paper_data["embeddings"][0]
 
@@ -246,31 +265,38 @@ class VectorStore:
             logger.info(f"找到 {len(papers)} 篇相似论文")
             return papers
 
+        except NotFoundError:
+            raise
         except Exception as e:
-            logger.error(f"获取相似论文失败: {str(e)}")
-            return []
+            logger.exception(f"获取相似论文失败: {str(e)}")
+            raise VectorStoreError(f"获取相似论文失败: {str(e)}") from e
 
     async def delete_paper_from_index(self, paper_id: str) -> bool:
         """
         从索引中删除论文
         :param paper_id: 论文ID
         :return: 是否成功
+        :raises VectorStoreError: 向量存储未初始化或删除失败
         """
-        if not self.paper_collection:
-            logger.error("向量存储未初始化")
-            return False
+        self._ensure_initialized()
 
         try:
             self.paper_collection.delete(ids=[paper_id])
             logger.info(f"论文已从索引中删除: {paper_id}")
             return True
         except Exception as e:
-            logger.error(f"删除论文索引失败: {str(e)}")
-            return False
+            logger.exception(f"删除论文索引失败: {str(e)}")
+            raise VectorStoreError(f"删除论文索引失败: {str(e)}") from e
 
     def get_index_stats(self) -> Dict:
-        """获取索引统计信息"""
-        if not self.paper_collection:
-            return {"count": 0}
+        """获取索引统计信息
 
-        return {"count": self.paper_collection.count()}
+        :raises VectorStoreError: 向量存储未初始化或统计失败
+        """
+        self._ensure_initialized()
+
+        try:
+            return {"count": self.paper_collection.count()}
+        except Exception as e:
+            logger.exception(f"获取索引统计失败: {str(e)}")
+            raise VectorStoreError(f"获取索引统计失败: {str(e)}") from e

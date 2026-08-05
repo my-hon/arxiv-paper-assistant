@@ -15,6 +15,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from src.config.settings import settings
+from src.core.exceptions import InterpretationError, NotFoundError
 from src.db.database import get_db
 from src.db.models import Paper, PaperInterpretation
 
@@ -249,7 +250,7 @@ class PaperInterpreter:
             return text
 
         except Exception as e:
-            logger.error(f"提取PDF文本失败: {str(e)}")
+            logger.exception(f"提取PDF文本失败: {str(e)}")
             return None
 
     def extract_images_from_pdf(self, pdf_path: str, paper_id: str) -> List[Dict]:
@@ -294,7 +295,12 @@ class PaperInterpreter:
                                     img_mode = img_obj.mode
                             except Exception as e:
                                 logger.warning(f"图片 {img_path} 损坏，跳过: {str(e)}")
-                                os.remove(img_path)
+                                try:
+                                    os.remove(img_path)
+                                except OSError as remove_error:
+                                    logger.warning(
+                                        f"删除损坏图片失败 {img_path}: {str(remove_error)}"
+                                    )
                                 continue
 
                             # 记录图片信息
@@ -328,7 +334,7 @@ class PaperInterpreter:
             return extracted_images
 
         except Exception as e:
-            logger.error(f"提取PDF图片失败: {str(e)}")
+            logger.exception(f"提取PDF图片失败: {str(e)}")
             return []
 
     def _truncate_text(self, text: str, max_length: int = 15000) -> str:
@@ -350,13 +356,14 @@ class PaperInterpreter:
         :param paper_id: 论文ID
         :param use_abstract_only: 是否仅使用摘要进行解读（用于快速预览）
         :return: 解读结果
+        :raises NotFoundError: 论文不存在
+        :raises InterpretationError: 大模型调用、结果解析或持久化失败
         """
         db = next(get_db())
         paper = db.query(Paper).filter(Paper.paper_id == paper_id).first()
 
         if not paper:
-            logger.error(f"论文不存在: {paper_id}")
-            return None
+            raise NotFoundError(f"论文不存在: {paper_id}")
 
         # 检查是否已解读过
         existing_interpretation = (
@@ -492,8 +499,16 @@ class PaperInterpreter:
 
             logger.info(f"论文解读完成: {paper_id}")
 
+        except Exception as e:
+            db.rollback()
+            logger.exception(f"论文解读失败: {str(e)}")
+            raise InterpretationError(f"论文解读失败 {paper_id}: {str(e)}") from e
+
+        # 解读结果已落库，报告生成失败不应导致整个解读失败
+        markdown_path = None
+        extracted_images = []
+        try:
             # 提取PDF图片（如果是全文解读）
-            extracted_images = []
             if (
                 not use_abstract_only
                 and paper.pdf_path
@@ -515,44 +530,42 @@ class PaperInterpreter:
             with open(markdown_path, "w", encoding="utf-8") as f:
                 f.write(markdown_content)
             logger.info(f"解读报告已保存到: {markdown_path}")
-
-            return {
-                "paper_id": paper_id,
-                # 核心信息
-                "problem_domain": result.problem_domain,
-                "core_contributions": result.core_contributions,
-                "innovations": result.innovations,
-                "limitations": result.limitations,
-                "conclusions": result.conclusions,
-
-                # 方法实现
-                "technical_approach": result.technical_approach,
-                "method_details": [md.dict() for md in result.method_details],
-                "implementation_notes": result.implementation_notes,
-                "code_links": [cl.dict() for cl in result.code_links],
-
-                # 数据集
-                "datasets": [ds.dict() for ds in result.datasets],
-
-                # 实验结果
-                "experimental_setup": result.experimental_setup,
-                "evaluation_metrics": [em.dict() for em in result.evaluation_metrics],
-                "experimental_results": [er.dict() for er in result.experimental_results],
-                "baseline_comparison": result.baseline_comparison,
-
-                # 辅助信息
-                "references": result.key_references,
-                "figure_descriptions": result.figure_descriptions,
-                "confidence_score": result.confidence_score,
-                "interpretation_model": settings.MODEL_NAME,
-                "markdown_path": markdown_path,
-                "extracted_images": len(extracted_images),
-            }
-
         except Exception as e:
-            logger.error(f"论文解读失败: {str(e)}")
-            db.rollback()
-            return None
+            markdown_path = None
+            logger.exception(f"生成解读报告失败，解读结果已保存: {str(e)}")
+
+        return {
+            "paper_id": paper_id,
+            # 核心信息
+            "problem_domain": result.problem_domain,
+            "core_contributions": result.core_contributions,
+            "innovations": result.innovations,
+            "limitations": result.limitations,
+            "conclusions": result.conclusions,
+
+            # 方法实现
+            "technical_approach": result.technical_approach,
+            "method_details": [md.dict() for md in result.method_details],
+            "implementation_notes": result.implementation_notes,
+            "code_links": [cl.dict() for cl in result.code_links],
+
+            # 数据集
+            "datasets": [ds.dict() for ds in result.datasets],
+
+            # 实验结果
+            "experimental_setup": result.experimental_setup,
+            "evaluation_metrics": [em.dict() for em in result.evaluation_metrics],
+            "experimental_results": [er.dict() for er in result.experimental_results],
+            "baseline_comparison": result.baseline_comparison,
+
+            # 辅助信息
+            "references": result.key_references,
+            "figure_descriptions": result.figure_descriptions,
+            "confidence_score": result.confidence_score,
+            "interpretation_model": settings.MODEL_NAME,
+            "markdown_path": markdown_path,
+            "extracted_images": len(extracted_images),
+        }
 
     def generate_markdown_report(
         self, paper: Paper, result: PaperInterpretationResult, images: List[Dict]

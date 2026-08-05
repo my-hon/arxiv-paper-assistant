@@ -1,10 +1,11 @@
 """
 复现验证API接口
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 
+from src.core.exceptions import NotFoundError
 from src.modules.reproduction.script_generator import ScriptGenerator
 from src.db.database import get_db
 from src.db.models import ReproductionTask
@@ -31,51 +32,29 @@ async def generate_reproduction_script(paper_id: str):
     """
     为指定论文生成复现脚本
     """
-    try:
-        generator = ScriptGenerator()
-        result = await generator.generate_script(paper_id)
-        
-        if not result:
-            raise HTTPException(status_code=500, detail="生成复现脚本失败")
-            
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"生成脚本失败: {str(e)}")
+    generator = ScriptGenerator()
+    return await generator.generate_script(paper_id)
 
 @router.post("/run/{task_id}", response_model=RunReproductionResponse, summary="运行复现任务")
 async def run_reproduction_task(task_id: str):
     """
     运行指定的复现任务
     """
-    try:
-        generator = ScriptGenerator()
-        result = await generator.run_reproduction(task_id)
-        
-        if not result:
-            raise HTTPException(status_code=500, detail="运行复现任务失败")
-            
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"运行任务失败: {str(e)}")
+    generator = ScriptGenerator()
+    return await generator.run_reproduction(task_id)
 
 @router.get("/task/{task_id}", summary="获取复现任务状态")
 async def get_reproduction_task(task_id: str):
     """
     获取复现任务的状态和结果
     """
+    db = next(get_db())
     try:
-        db = next(get_db())
         task = db.query(ReproductionTask).filter(ReproductionTask.task_id == task_id).first()
-        
+
         if not task:
-            raise HTTPException(status_code=404, detail="任务不存在")
-            
+            raise NotFoundError(f"复现任务不存在: {task_id}")
+
         return {
             "task_id": task.task_id,
             "paper_id": task.paper_id,
@@ -87,11 +66,8 @@ async def get_reproduction_task(task_id: str):
             "report_path": task.report_path,
             "error_message": task.error_message
         }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取任务状态失败: {str(e)}")
+    finally:
+        db.close()
 
 @router.get("/tasks", summary="获取复现任务列表")
 async def list_reproduction_tasks(
@@ -103,15 +79,15 @@ async def list_reproduction_tasks(
     """
     获取复现任务列表
     """
+    db = next(get_db())
     try:
-        db = next(get_db())
         query = db.query(ReproductionTask)
-        
+
         if status:
             query = query.filter(ReproductionTask.status == status)
         if paper_id:
             query = query.filter(ReproductionTask.paper_id == paper_id)
-            
+
         total = query.count()
         tasks = query.order_by(ReproductionTask.created_at.desc()).offset(offset).limit(limit).all()
         
@@ -129,6 +105,5 @@ async def list_reproduction_tasks(
                 for task in tasks
             ]
         }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取任务列表失败: {str(e)}")
+    finally:
+        db.close()
